@@ -42,6 +42,31 @@ def _clean_env(account_home: str) -> dict:
     return env
 
 
+def _ka_log_path(home: str, session: str) -> str:
+    return os.path.join(home, ".config", "colab-cli", f"ka-{session}.log")
+
+
+def _ka_death_reason(home: str, session: str) -> str:
+    try:
+        hist_dir = os.path.join(home, ".config", "colab-cli", "history")
+        for fn in sorted(os.listdir(hist_dir), reverse=True):
+            if not fn.endswith(".jsonl"):
+                continue
+            with open(os.path.join(hist_dir, fn)) as f:
+                for line in f:
+                    try:
+                        ev = json.loads(line)
+                    except Exception:
+                        continue
+                    if ev.get("session") != session or ev.get("event") != "keep_alive_stopped":
+                        continue
+                    payload = ev.get("payload", {})
+                    return json.dumps(payload)
+        return "no keep_alive_stopped event found"
+    except Exception as e:
+        return f"history read failed: {e}"
+
+
 def reconcile_keepalives(active: list[tuple[str, str, str]]):
     """Keep one `colab keep-alive` subprocess alive per active session.
 
@@ -69,7 +94,12 @@ def reconcile_keepalives(active: list[tuple[str, str, str]]):
             continue
         if p is not None:
             logger.warning(
-                "keep-alive %s/%s exited rc=%s, respawning", home, name, p.returncode
+                "keep-alive %s/%s exited rc=%s reason=%s log=%s; respawning",
+                home,
+                name,
+                p.returncode,
+                _ka_death_reason(home, name),
+                _ka_log_path(home, name),
             )
         config = os.path.join(home, ".config", "colab-cli", "sessions.json")
         cmd = [
@@ -82,10 +112,11 @@ def reconcile_keepalives(active: list[tuple[str, str, str]]):
             endpoint,
             name,
         ]
+        logf = open(_ka_log_path(home, name), "a")
         proc = subprocess.Popen(
             cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=logf,
+            stderr=logf,
             stdin=subprocess.DEVNULL,
             env=_clean_env(home),
             start_new_session=True,

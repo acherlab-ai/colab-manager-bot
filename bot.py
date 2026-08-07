@@ -672,9 +672,10 @@ async def keepalive_watchdog():
     idle-pruned after ~15 min when the detached CLI daemon dies."""
     while True:
         try:
-            await asyncio.to_thread(
-                colab_ops.reconcile_keepalives, _scan_active_sessions()
-            )
+            sessions = _scan_active_sessions()
+            if sessions:
+                log(f"keepalive watch: {len(sessions)} active session(s)")
+            await asyncio.to_thread(colab_ops.reconcile_keepalives, sessions)
         except Exception as e:
             log(f"keepalive watchdog error: {e}")
         await asyncio.sleep(60)
