@@ -1,5 +1,5 @@
 {
-  "bot_token": "PASTE_YOUR_TELEGRAM_BOT_TOKEN",
+  "bot_token": "8226976638:AAGTF6O2X0HBZ365MScLPeVskxmDEhgeSiI",
   "data_dir": "/root/colab-bot/data",
   "colab_bin": "/tmp/opencode/colab-venv/bin/colab",
   "max_accounts_per_user": 3,
