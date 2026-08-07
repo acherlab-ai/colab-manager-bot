@@ -46,6 +46,15 @@ DATA_DIR = CONFIG["data_dir"]
 MAX_ACCOUNTS = CONFIG["max_accounts_per_user"]
 MAX_HANG_HOURS = CONFIG["max_hang_hours"]
 
+try:
+    import jupyter_kernel_client
+
+    _JKC_VER = getattr(jupyter_kernel_client, "__version__", "?")
+    _JKC_HAS_KC = hasattr(jupyter_kernel_client, "KernelClient")
+except Exception as _e:  # noqa: BLE001
+    _JKC_VER = f"import failed: {_e}"
+    _JKC_HAS_KC = False
+
 store = UserStore(DATA_DIR)
 
 pending_auth: dict[int, str] = {}
@@ -63,6 +72,9 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 def log(msg: str):
     logging.info(msg)
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+log(f"jupyter_kernel_client version={_JKC_VER} has KernelClient={_JKC_HAS_KC}")
 
 
 # ---- keyboard builders ----
