@@ -11,6 +11,9 @@ import uuid
 logger = logging.getLogger(__name__)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+VENDOR_DIR = os.path.join(BASE_DIR, "vendor")
+if os.path.isdir(VENDOR_DIR):
+    sys.path.insert(0, VENDOR_DIR)
 _COLAB_BIN = (
     os.environ.get("COLAB_BIN")
     or shutil.which("colab")
@@ -64,6 +67,8 @@ def run_colab(account_home: str, args, timeout: int = 600, input_text: str | Non
         env.pop(k, None)
     env["NO_PROXY"] = "*"
     env["no_proxy"] = "*"
+    if os.path.isdir(VENDOR_DIR):
+        env["PYTHONPATH"] = VENDOR_DIR + os.pathsep + env.get("PYTHONPATH", "")
     config = os.path.join(account_home, ".config", "colab-cli", "sessions.json")
     cmd = [_COLAB_BIN]
     cmd += ["--config", config]
