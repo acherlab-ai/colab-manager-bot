@@ -21,6 +21,29 @@ _COLAB_BIN = (
 )
 
 _KEEPALIVE_PROCS: dict[tuple[str, str], subprocess.Popen] = {}
+_KEEPALIVE_STARTED_AT: dict[tuple[str, str], float] = {}
+
+_KA_STUCK_GRACE_SECS = 120
+
+
+def _ka_started_event(home: str, session: str, pid: int) -> bool:
+    """True if the history file shows a keep_alive_started event for `pid`."""
+    try:
+        hist = os.path.join(home, ".config", "colab-cli", "history", f"{session}.jsonl")
+        if not os.path.exists(hist):
+            return False
+        with open(hist) as f:
+            for line in f:
+                try:
+                    ev = json.loads(line)
+                except Exception:
+                    continue
+                et = ev.get("event_type") or ev.get("event")
+                if et == "keep_alive_started" and str(ev.get("pid")) == str(pid):
+                    return True
+    except Exception:
+        pass
+    return False
 
 
 def _clean_env(account_home: str) -> dict:
@@ -49,19 +72,20 @@ def _ka_log_path(home: str, session: str) -> str:
 def _ka_death_reason(home: str, session: str) -> str:
     try:
         hist_dir = os.path.join(home, ".config", "colab-cli", "history")
-        for fn in sorted(os.listdir(hist_dir), reverse=True):
-            if not fn.endswith(".jsonl"):
-                continue
-            with open(os.path.join(hist_dir, fn)) as f:
-                for line in f:
-                    try:
-                        ev = json.loads(line)
-                    except Exception:
-                        continue
-                    if ev.get("session") != session or ev.get("event") != "keep_alive_stopped":
-                        continue
-                    payload = ev.get("payload", {})
-                    return json.dumps(payload)
+        fn = os.path.join(hist_dir, f"{session}.jsonl")
+        if not os.path.exists(fn):
+            return "no history file"
+        with open(fn) as f:
+            for line in f:
+                try:
+                    ev = json.loads(line)
+                except Exception:
+                    continue
+                et = ev.get("event_type") or ev.get("event")
+                if et != "keep_alive_stopped":
+                    continue
+                payload = ev.get("payload") or ev
+                return json.dumps(payload)[:200]
         return "no keep_alive_stopped event found"
     except Exception as e:
         return f"history read failed: {e}"
@@ -91,7 +115,27 @@ def reconcile_keepalives(active: list[tuple[str, str, str]]):
         key = (home, name)
         p = _KEEPALIVE_PROCS.get(key)
         if p is not None and p.poll() is None:
-            continue
+            # Process alive, but if it never entered the keep-alive loop (auth
+            # refresh can hang at startup) the VM is not actually being kept
+            # alive and gets idle-pruned after ~15 min. Respawn stuck daemons.
+            age = time.time() - _KEEPALIVE_STARTED_AT.get(key, 0)
+            if age > _KA_STUCK_GRACE_SECS and not _ka_started_event(home, name, p.pid):
+                logger.warning(
+                    "keep-alive %s/%s pid=%s alive %ss but never started pinging; killing",
+                    home,
+                    name,
+                    p.pid,
+                    int(age),
+                )
+                try:
+                    p.terminate()
+                except Exception:
+                    pass
+                _KEEPALIVE_PROCS.pop(key, None)
+                _KEEPALIVE_STARTED_AT.pop(key, None)
+                p = None
+            else:
+                continue
         if p is not None:
             logger.warning(
                 "keep-alive %s/%s exited rc=%s reason=%s log=%s; respawning",
@@ -122,6 +166,7 @@ def reconcile_keepalives(active: list[tuple[str, str, str]]):
             start_new_session=True,
         )
         _KEEPALIVE_PROCS[key] = proc
+        _KEEPALIVE_STARTED_AT[key] = time.time()
         logger.info("keep-alive spawned for %s (endpoint %s) pid=%s", name, endpoint, proc.pid)
 
 SSHX_URL_RE = re.compile(r"https://sshx\.io/s/[^\s\]\)]+")
