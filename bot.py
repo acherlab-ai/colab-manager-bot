@@ -178,7 +178,26 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "• Tối đa <b>3 tài khoản Google</b> cho mỗi user\n"
         "• Tạo labs CPU / GPU / TPU kèm link <b>sshx</b>\n"
         "• Thời gian treo tối đa mỗi lab: <b>~24h</b>\n\n"
+        f"<code>/ver</code> để kiểm tra phiên bản đang chạy\n"
         "Chọn chức năng dưới bàn phím 👇",
+        main_keyboard(),
+    )
+
+
+async def ver(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_chat.id
+    ver = "?"
+    try:
+        with open(os.path.join(BASE_DIR, "VERSION")) as f:
+            ver = f.read().strip()
+    except Exception:
+        pass
+    procs = len(colab_ops._KEEPALIVE_PROCS)
+    await reply(
+        update,
+        f"🛠 <b>Phiên bản</b>: <code>{ver}</code>\n"
+        f"🔄 Keep-alive daemon đang chạy: <b>{procs}</b>\n"
+        f"👤 User: <code>{uid}</code>",
         main_keyboard(),
     )
 
@@ -688,6 +707,7 @@ def main():
 
     app = Application.builder().token(CONFIG["bot_token"]).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("ver", ver))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
     log("Bot started")
     app.run_polling()
