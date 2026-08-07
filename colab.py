@@ -2,12 +2,20 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
 import uuid
 
 logger = logging.getLogger(__name__)
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+_COLAB_BIN = (
+    os.environ.get("COLAB_BIN")
+    or shutil.which("colab")
+    or "/tmp/opencode/colab-venv/bin/colab"
+)
 
 SSHX_URL_RE = re.compile(r"https://sshx\.io/s/[^\s\]\)]+")
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -57,7 +65,7 @@ def run_colab(account_home: str, args, timeout: int = 600, input_text: str | Non
     env["NO_PROXY"] = "*"
     env["no_proxy"] = "*"
     config = os.path.join(account_home, ".config", "colab-cli", "sessions.json")
-    cmd = [os.environ.get("COLAB_BIN", "/tmp/opencode/colab-venv/bin/colab")]
+    cmd = [_COLAB_BIN]
     cmd += ["--config", config]
     cmd += args
     logger.info("RUN %s", " ".join(cmd))
@@ -102,7 +110,7 @@ def create_lab(account_home: str, name: str, gpu: str | None = None, tpu: str | 
         env["no_proxy"] = "*"
         try:
             proc = subprocess.run(
-                [sys.executable, "/root/colab-bot/unassign_orphans.py", account_home, config],
+                [sys.executable, os.path.join(BASE_DIR, "unassign_orphans.py"), account_home, config],
                 capture_output=True, text=True, env=env, timeout=120,
             )
             logger.warning("orphan cleanup after failed create: %s %s",

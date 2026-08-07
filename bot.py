@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 from datetime import datetime
 
@@ -18,7 +19,29 @@ import colab as colab_ops
 import oauth as oauth_ops
 from store import UserStore
 
-CONFIG = json.load(open("/root/colab-bot/config.json"))
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _load_config() -> dict:
+    cfg = {}
+    try:
+        with open(os.environ.get("BOT_CONFIG", os.path.join(BASE_DIR, "config.json"))) as f:
+            cfg = json.load(f)
+    except FileNotFoundError:
+        pass
+    return {
+        "bot_token": os.environ.get("BOT_TOKEN", cfg.get("bot_token", "")),
+        "data_dir": os.environ.get("DATA_DIR", cfg.get("data_dir", os.path.join(BASE_DIR, "data"))),
+        "max_accounts_per_user": int(
+            os.environ.get("MAX_ACCOUNTS_PER_USER", cfg.get("max_accounts_per_user", 3))
+        ),
+        "gpu_types": cfg.get("gpu_types", ["T4", "L4", "G4", "H100", "A100"]),
+        "tpu_types": cfg.get("tpu_types", ["v5e1", "v6e1"]),
+        "max_hang_hours": int(os.environ.get("MAX_HANG_HOURS", cfg.get("max_hang_hours", 24))),
+    }
+
+
+CONFIG = _load_config()
 DATA_DIR = CONFIG["data_dir"]
 MAX_ACCOUNTS = CONFIG["max_accounts_per_user"]
 MAX_HANG_HOURS = CONFIG["max_hang_hours"]
@@ -31,7 +54,7 @@ user_locks: dict[int, asyncio.Lock] = {}
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(message)s",
-    filename="/root/colab-bot/bot.log",
+    filename=os.environ.get("LOG_PATH", os.path.join(BASE_DIR, "bot.log")),
     level=logging.INFO,
 )
 logging.getLogger("httpx").setLevel(logging.WARNING)
