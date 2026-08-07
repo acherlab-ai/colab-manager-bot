@@ -647,8 +647,45 @@ async def handle_stop_lab(update: Update, st: dict, text: str):
     )
 
 
+def _scan_active_sessions() -> list[tuple[str, str, str]]:
+    """Return (account_home, session_name, endpoint) for every live session."""
+    found: list[tuple[str, str, str]] = []
+    for chat_id in list(getattr(store, "_data", {}).keys()):
+        for acc in store.list_accounts(chat_id):
+            home = store.account_home(chat_id, acc["name"])
+            cfg = os.path.join(home, ".config", "colab-cli", "sessions.json")
+            try:
+                with open(cfg) as f:
+                    data = json.load(f)
+            except Exception:
+                continue
+            if not isinstance(data, dict):
+                continue
+            for name, s in data.items():
+                if isinstance(s, dict) and s.get("endpoint"):
+                    found.append((home, name, s["endpoint"]))
+    return found
+
+
+async def keepalive_watchdog():
+    """Respawn any dead `colab keep-alive` daemons so labs don't get
+    idle-pruned after ~15 min when the detached CLI daemon dies."""
+    while True:
+        try:
+            await asyncio.to_thread(
+                colab_ops.reconcile_keepalives, _scan_active_sessions()
+            )
+        except Exception as e:
+            log(f"keepalive watchdog error: {e}")
+        await asyncio.sleep(60)
+
+
 def main():
-    app = Application.builder().token(CONFIG["bot_token"]).build()
+    async def post_init(_app):
+        _app.create_task(keepalive_watchdog())
+        log("keepalive watchdog started")
+
+    app = Application.builder().token(CONFIG["bot_token"]).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
     log("Bot started")

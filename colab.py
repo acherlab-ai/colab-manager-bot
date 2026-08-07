@@ -20,6 +20,79 @@ _COLAB_BIN = (
     or "/tmp/opencode/colab-venv/bin/colab"
 )
 
+_KEEPALIVE_PROCS: dict[tuple[str, str], subprocess.Popen] = {}
+
+
+def _clean_env(account_home: str) -> dict:
+    """Build an env isolated to one Google account, proxy-free.
+
+    Strips sandbox-injected proxy vars: the proxy (127.0.0.1:7890) only lives
+    while the launching shell runs, so detached children (the keep-alive
+    daemon) that inherit it fail with ProxyError and the VM gets idle-pruned.
+    Direct connections work fine.
+    """
+    env = dict(os.environ)
+    env["HOME"] = account_home
+    for k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"):
+        env.pop(k, None)
+    env["NO_PROXY"] = "*"
+    env["no_proxy"] = "*"
+    if os.path.isdir(VENDOR_DIR):
+        env["PYTHONPATH"] = VENDOR_DIR + os.pathsep + env.get("PYTHONPATH", "")
+    return env
+
+
+def reconcile_keepalives(active: list[tuple[str, str, str]]):
+    """Keep one `colab keep-alive` subprocess alive per active session.
+
+    The `colab new` CLI spawns its own detached keep-alive daemon, but on
+    Railway that detached grandchild can die (container restarts, process
+    reaping) and the VM then gets idle-pruned by Colab after ~15 min. This
+    function lets the bot's main process (which is guaranteed to be running)
+    own the keep-alive loops instead, respawning any that exit.
+
+    `active` is a list of (account_home, session_name, endpoint).
+    """
+    wanted = {(home, name) for home, name, _ in active}
+
+    for key in list(_KEEPALIVE_PROCS.keys()):
+        if key not in wanted:
+            p = _KEEPALIVE_PROCS.pop(key)
+            if p.poll() is None:
+                p.terminate()
+            logger.info("keep-alive stopped for %s (%s)", key[1], key[0])
+
+    for home, name, endpoint in active:
+        key = (home, name)
+        p = _KEEPALIVE_PROCS.get(key)
+        if p is not None and p.poll() is None:
+            continue
+        if p is not None:
+            logger.warning(
+                "keep-alive %s/%s exited rc=%s, respawning", home, name, p.returncode
+            )
+        config = os.path.join(home, ".config", "colab-cli", "sessions.json")
+        cmd = [
+            sys.executable,
+            "-m",
+            "colab_cli.cli",
+            "--config",
+            config,
+            "keep-alive",
+            endpoint,
+            name,
+        ]
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            env=_clean_env(home),
+            start_new_session=True,
+        )
+        _KEEPALIVE_PROCS[key] = proc
+        logger.info("keep-alive spawned for %s (endpoint %s) pid=%s", name, endpoint, proc.pid)
+
 SSHX_URL_RE = re.compile(r"https://sshx\.io/s/[^\s\]\)]+")
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
@@ -61,14 +134,7 @@ def run_colab(account_home: str, args, timeout: int = 600, input_text: str | Non
     that inherit it fail with ProxyError and the VM gets idle-pruned. Direct
     connections work fine.
     """
-    env = dict(os.environ)
-    env["HOME"] = account_home
-    for k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"):
-        env.pop(k, None)
-    env["NO_PROXY"] = "*"
-    env["no_proxy"] = "*"
-    if os.path.isdir(VENDOR_DIR):
-        env["PYTHONPATH"] = VENDOR_DIR + os.pathsep + env.get("PYTHONPATH", "")
+    env = _clean_env(account_home)
     config = os.path.join(account_home, ".config", "colab-cli", "sessions.json")
     cmd = [_COLAB_BIN]
     cmd += ["--config", config]
