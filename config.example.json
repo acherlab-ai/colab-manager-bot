@@ -1,0 +1,9 @@
+{
+  "bot_token": "PASTE_YOUR_TELEGRAM_BOT_TOKEN",
+  "data_dir": "/root/colab-bot/data",
+  "colab_bin": "/tmp/opencode/colab-venv/bin/colab",
+  "max_accounts_per_user": 3,
+  "gpu_types": ["T4", "L4", "G4", "H100", "A100"],
+  "tpu_types": ["v5e1", "v6e1"],
+  "max_hang_hours": 24
+}

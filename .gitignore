@@ -1,0 +1,14 @@
+# Secrets
+config.json
+data/
+
+# Logs / runtime
+*.log
+*.pid
+ka_monitor.out
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
