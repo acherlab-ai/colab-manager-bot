@@ -204,13 +204,16 @@ async def ver(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ka = colab_ops.keepalive_status()
     ok = sum(1 for v in ka.values() if v["ok"])
     fail = len(ka) - ok
-    await reply(
-        update,
-        f"🛠 <b>Phiên bản</b>: <code>{ver}</code>\n"
-        f"🔄 Keep-alive (in-process): <b>{ok} OK / {fail} FAIL</b> (tracked {len(ka)})\n"
-        f"👤 User: <code>{uid}</code>",
-        main_keyboard(),
-    )
+    lines = [
+        f"🛠 <b>Phiên bản</b>: <code>{ver}</code>",
+        f"🔄 Keep-alive (in-process): <b>{ok} OK / {fail} FAIL</b> (tracked {len(ka)})",
+    ]
+    for name, v in sorted(ka.items()):
+        if not v["ok"]:
+            t = datetime.fromtimestamp(v["at"]).strftime("%H:%M:%S")
+            lines.append(f"   <code>{name}</code>: {v['detail'][:120]} @ {t}")
+    lines.append(f"👤 User: <code>{uid}</code>")
+    await reply(update, "\n".join(lines), main_keyboard())
 
 
 async def on_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
