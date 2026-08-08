@@ -144,11 +144,36 @@ def _record_ka(name: str, ok: bool, detail: str, now: float) -> None:
         _KA_STATUS[name] = {"ok": ok, "detail": detail, "at": now}
 
 
+_KA_CONSEC_4XX: dict[str, int] = {}
+
+
+def _drop_session(home: str, name: str) -> None:
+    """Remove a session from sessions.json (atomic), matching colab_cli's
+    'consecutive_4xx_errors' behaviour: 2 consecutive 4xx = assignment gone.
+    """
+    path = os.path.join(home, ".config", "colab-cli", "sessions.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict) or name not in data:
+            return
+        del data[name]
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp, path)
+        logger.warning("keep-alive: removed dead session %s from sessions.json", name)
+    except Exception:
+        logger.exception("keep-alive: failed to remove session %s", name)
+
+
 def keepalive_once(active: list[tuple[str, str, str]]) -> None:
     """Ping every active (home, name, endpoint) session once.
 
     A failing session is recorded/logged individually; it never propagates,
-    so one broken session cannot crash the keep-alive loop.
+    so one broken session cannot crash the keep-alive loop. A session that
+    returns 2 consecutive 4xx (e.g. 404 = assignment deleted) is dropped from
+    sessions.json, mirroring colab_cli's keep-alive daemon.
     """
     now = time.time()
     for home, name, endpoint in active:
@@ -159,6 +184,8 @@ def keepalive_once(active: list[tuple[str, str, str]]) -> None:
             _record_ka(name, False, "unexpected exception", now)
             continue
         if err is None:
+            with _KA_STATUS_GUARD:
+                _KA_CONSEC_4XX.pop(name, None)
             _record_ka(name, True, "", now)
             last = _KA_SUCCESS_LOG_AT.get(name, 0.0)
             if now - last >= _KA_SUCCESS_LOG_EVERY:
@@ -167,6 +194,14 @@ def keepalive_once(active: list[tuple[str, str, str]]) -> None:
         else:
             _record_ka(name, False, err, now)
             logger.warning("keep-alive FAILED session=%s endpoint=%s: %s", name, endpoint, err)
+            if err.startswith("HTTP 4"):
+                with _KA_STATUS_GUARD:
+                    n4xx = _KA_CONSEC_4XX.get(name, 0) + 1
+                    _KA_CONSEC_4XX[name] = n4xx
+                if n4xx >= 2:
+                    with _KA_STATUS_GUARD:
+                        _KA_CONSEC_4XX.pop(name, None)
+                    _drop_session(home, name)
 
 
 def keepalive_status() -> dict:

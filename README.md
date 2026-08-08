@@ -7,26 +7,24 @@ Telegram bot quản lý Google Colab labs: tạo lab CPU / GPU / TPU kèm link s
 - Đăng ký tối đa 3 tài khoản Google cho mỗi user (OAuth2 device flow).
 - Tạo lab CPU / GPU / TPU với các loại cấu hình (`config.json`).
 - Tự động chạy **sshx** trên lab và trả link truy cập terminal.
-- Keep-alive lab tối đa ~24h — ping HTTP **in-process** mỗi 60s, không spawn daemon con (tiết kiệm RAM, không leak FD).
+- Keep-alive lab tối đa ~24h (daemon do `colab` CLI sinh ra).
 - Check lab, dừng lab. Khi dừng, bot giết toàn bộ process trên VM trước khi `colab stop` để link sshx chết ngay.
 
 ## Cài đặt
 
 ```bash
 pip install -r requirements.txt   # python-telegram-bot, google-auth-oauthlib, google-colab-cli, requests
-python apply_patches.py           # tái lập 3 patch cần thiết cho google-colab-cli
+python apply_patches.py           # tái lập 2 patch cần thiết cho google-colab-cli
 ```
 
 Sao chép `config.example.json` → `config.json` và điền token bot Telegram (hoặc dùng env var `BOT_TOKEN`).
 
 ## Yêu cầu
 
-- Python **>= 3.12** (`google-colab-cli` 0.6.0 yêu cầu) — Dockerfile đã pin `python:3.12-slim`.
 - `colab` CLI (`google-colab-cli` >=0.6.0) — tự cài qua `requirements.txt`.
-- 3 patch cần thiết (bot tự áp qua `apply_patches.py`):
+- 2 patch cần thiết (bot tự áp qua `apply_patches.py`):
   - `colab_cli/client.py` — `timeout` mặc định 600s (TPU provisioning > 120s).
   - `colab_cli/commands/session.py::stop` — unassign trước, đóng kernel sau (VM chết nhanh).
-  - `colab_cli/commands/session.py` — tắt keep-alive daemon của CLI (thay bằng pinger in-process của bot).
 
 ## Chạy
 
@@ -37,7 +35,7 @@ nohup python bot.py > bot_console.log 2>&1 &
 
 ## Deploy lên Railway
 
-`railway.toml` + `Dockerfile` + `apply_patches.py` đã sẵn trong repo. Bot đọc cấu hình từ **env var** (không cần `config.json`):
+`railway.toml` + `apply_patches.py` đã sẵn trong repo. Bot đọc cấu hình từ **env var** (không cần `config.json`):
 
 | Env var | Mô tả |
 |---|---|
@@ -47,9 +45,8 @@ nohup python bot.py > bot_console.log 2>&1 &
 | `MAX_HANG_HOURS` | Thời gian lab tối đa (mặc định 24) |
 | `COLAB_BIN` | Đường dẫn `colab` CLI (tự dò PATH nếu bỏ trống) |
 
-- Builder = `DOCKERFILE` — patch `apply_patches.py` được chạy ngay trong lúc build (idempotent, chạy lại cũng được).
-- **Tạo Railway Volume mount vào `/app/data`** (bot dùng `DATA_DIR=/app/data`) để `sessions.json` + `token.json` **sống sót qua restart/redeploy** — không phải đăng nhập lại.
-- Sau deploy, bot tự restore session từ `sessions.json` và keep-alive ngay tick đầu tiên (60s).
+- `startCommand = "python apply_patches.py && python bot.py"` — `apply_patches.py` tự tái lập 2 patch cho `google-colab-cli` (timeout 600s + unassign-trước-khi-stop).
+- Vì filesystem Railway là tạm thời, `data/` (OAuth Google + session) sẽ mất khi redeploy — cần đăng nhập lại qua `/login`.
 
 ## Lưu ý bảo mật
 

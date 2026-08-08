@@ -1,12 +1,13 @@
 [build]
-  builder = "DOCKERFILE"
-  dockerfilePath = "Dockerfile"
+  builder = "NIXPACKS"
+  buildCommand = "pip install --force-reinstall --no-cache-dir -r requirements.txt"
 
 [deploy]
-  startCommand = "python bot.py"
+  startCommand = "python apply_patches.py && python bot.py"
 
-# Railway notes:
-# - Python must be >= 3.12 (google-colab-cli 0.6.0 requires it). Pinned in Dockerfile.
-# - Create a Railway Volume mounted at /app/data (DATA_DIR=/app/data is set in the
-#   Dockerfile) so sessions.json + token.json survive restarts and redeploys.
-# - Set BOT_TOKEN in Railway -> Variables (or .env).
+# NOTE:
+# - Python must be >= 3.12 (google-colab-cli 0.6.0 requirement).
+# - Railway's filesystem is EPHEMERAL: it is wiped on every redeploy/restart.
+#   Keep-alive recovery depends on sessions.json + token.json surviving, so you
+#   MUST mount a Railway Volume at /app/data and set DATA_DIR=/app/data.
+#   Without the volume, OAuth sessions and labs are lost on each restart.
