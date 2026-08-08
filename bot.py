@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import sys
 from datetime import datetime
 
 from telegram import ReplyKeyboardMarkup, Update
@@ -24,14 +25,17 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def _load_config() -> dict:
     cfg = {}
+    cfg_path = os.environ.get("BOT_CONFIG", os.path.join(BASE_DIR, "config.json"))
     try:
-        with open(os.environ.get("BOT_CONFIG", os.path.join(BASE_DIR, "config.json"))) as f:
+        with open(cfg_path, encoding="utf-8") as f:
             cfg = json.load(f)
     except FileNotFoundError:
         pass
+    except Exception:
+        logging.exception("config.json unreadable: %s", cfg_path)
     return {
         "bot_token": os.environ.get("BOT_TOKEN", cfg.get("bot_token", "")),
-        "data_dir": os.environ.get("DATA_DIR", cfg.get("data_dir", os.path.join(BASE_DIR, "data"))),
+        "data_dir": os.environ.get("DATA_DIR", cfg.get("data_dir", os.path.join(".", "data"))),
         "max_accounts_per_user": int(
             os.environ.get("MAX_ACCOUNTS_PER_USER", cfg.get("max_accounts_per_user", 3))
         ),
@@ -75,6 +79,11 @@ def log(msg: str):
 
 
 log(f"jupyter_kernel_client version={_JKC_VER} has KernelClient={_JKC_HAS_KC}")
+log(f"DATA_DIR={os.path.abspath(DATA_DIR)}")
+log(f"colab CLI: {colab_ops._COLAB_BIN}")
+if sys.version_info < (3, 12):
+    log("WARNING: python-telegram-bot/google-colab-cli 0.6.0 require Python >=3.12; "
+        "running on an older interpreter may fail")
 
 
 # ---- keyboard builders ----
@@ -178,7 +187,7 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "• Tối đa <b>3 tài khoản Google</b> cho mỗi user\n"
         "• Tạo labs CPU / GPU / TPU kèm link <b>sshx</b>\n"
         "• Thời gian treo tối đa mỗi lab: <b>~24h</b>\n\n"
-        f"<code>/ver</code> để kiểm tra phiên bản đang chạy\n"
+        "<code>/ver</code> để kiểm tra phiên bản đang chạy\n"
         "Chọn chức năng dưới bàn phím 👇",
         main_keyboard(),
     )
@@ -192,11 +201,13 @@ async def ver(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             ver = f.read().strip()
     except Exception:
         pass
-    procs = len(colab_ops._KEEPALIVE_PROCS)
+    ka = colab_ops.keepalive_status()
+    ok = sum(1 for v in ka.values() if v["ok"])
+    fail = len(ka) - ok
     await reply(
         update,
         f"🛠 <b>Phiên bản</b>: <code>{ver}</code>\n"
-        f"🔄 Keep-alive daemon đang chạy: <b>{procs}</b>\n"
+        f"🔄 Keep-alive (in-process): <b>{ok} OK / {fail} FAIL</b> (tracked {len(ka)})\n"
         f"👤 User: <code>{uid}</code>",
         main_keyboard(),
     )
@@ -254,7 +265,6 @@ async def on_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_main(update: Update, text: str):
-    uid = update.effective_chat.id
     if text == BTN_LOGIN:
         await start_login(update)
     elif text == BTN_DEL:
@@ -290,6 +300,7 @@ async def start_login(update: Update):
         url = await asyncio.to_thread(oauth_ops.generate_auth_url, home)
     except Exception as e:
         log(f"login gen url err {uid}: {e}")
+        logging.exception("generate_auth_url failed for %s", uid)
         await reply(update, f"❌ Lỗi tạo URL xác thực: {e}", main_keyboard())
         return
     pending_auth[uid] = acc_name
@@ -312,6 +323,7 @@ async def handle_auth_code(update: Update, code: str):
         email = await asyncio.to_thread(oauth_ops.exchange_code, home, code)
     except Exception as e:
         log(f"auth exchange err {uid} {acc_name}: {e}")
+        logging.exception("oauth exchange failed for %s/%s", uid, acc_name)
         await reply(
             update,
             f"❌ Xác thực thất bại: <code>{e}</code>\n\n"
@@ -370,8 +382,8 @@ async def handle_del_account(update: Update, st: dict, text: str):
                 stopped.append(lab["name"])
             except Exception as e:
                 log(f"stop {acc_name}/{lab['name']} err: {e}")
-    except Exception as e:
-        log(f"delaccount lab scan err {uid}: {e}")
+    except Exception:
+        logging.exception("delaccount lab scan err %s", uid)
     store.remove_account(uid, acc_name)
     reset(uid)
     log(f"account removed {uid} {acc_name}")
@@ -399,6 +411,7 @@ async def show_check_accounts(update: Update):
             n_labs = len(parse_labs(out))
         except Exception as e:
             log(f"checkacc labs err {uid} {a['name']}: {e}")
+            logging.exception("checkacc labs err %s/%s", uid, a["name"])
         lines.append(
             f"⚙️ <b>{a['name'].upper()}</b>\n"
             f"   📧 {a['email']}\n"
@@ -451,14 +464,14 @@ async def handle_create_type(update: Update, st: dict, text: str):
         user_state[uid] = {"flow": "create_gpu", "acc": acc}
         await reply(
             update,
-            f"🎮 <b>GPU</b> — chọn loại GPU:",
+            "🎮 <b>GPU</b> — chọn loại GPU:",
             with_back([[g] for g in CONFIG["gpu_types"]]),
         )
     elif text == BTN_TPU:
         user_state[uid] = {"flow": "create_tpu", "acc": acc}
         await reply(
             update,
-            f"🔮 <b>TPU</b> — chọn loại TPU:",
+            "🔮 <b>TPU</b> — chọn loại TPU:",
             with_back([[t] for t in CONFIG["tpu_types"]]),
         )
     else:
@@ -494,6 +507,7 @@ async def do_create(update: Update, acc_name: str, gpu=None, tpu=None):
             await asyncio.to_thread(colab_ops.create_lab, home, name, gpu, tpu)
         except Exception as e:
             log(f"create lab err {uid} {acc_name}: {e}")
+            logging.exception("create lab failed %s/%s", uid, acc_name)
             reset(uid)
             await reply(
                 update,
@@ -515,6 +529,7 @@ async def do_create(update: Update, acc_name: str, gpu=None, tpu=None):
             link = await asyncio.to_thread(colab_ops.start_sshx, home, name)
         except Exception as e:
             log(f"sshx err {uid} {name}: {e}")
+            logging.exception("start_sshx failed %s/%s", uid, name)
             reset(uid)
             await reply(
                 update,
@@ -572,6 +587,7 @@ async def handle_check_account(update: Update, st: dict, text: str):
         out = await asyncio.to_thread(colab_ops.list_labs, home)
     except Exception as e:
         log(f"checklabs err {uid}: {e}")
+        logging.exception("checklabs err %s", uid)
         reset(uid)
         await reply(update, f"❌ Lỗi: <code>{e}</code>", main_keyboard())
         return
@@ -620,6 +636,7 @@ async def handle_stop_account(update: Update, st: dict, text: str):
         out = await asyncio.to_thread(colab_ops.list_labs, home)
     except Exception as e:
         log(f"stopsel err {uid}: {e}")
+        logging.exception("stopsel err %s", uid)
         reset(uid)
         await reply(update, f"❌ Lỗi: <code>{e}</code>", main_keyboard())
         return
@@ -654,6 +671,7 @@ async def handle_stop_lab(update: Update, st: dict, text: str):
         out = await asyncio.to_thread(colab_ops.stop_lab, home, text)
     except Exception as e:
         log(f"stop err {uid} {text}: {e}")
+        logging.exception("stop lab failed %s/%s", uid, text)
         reset(uid)
         await reply(update, f"❌ Dừng lab thất bại:\n<code>{e}</code>", main_keyboard())
         return
@@ -667,18 +685,26 @@ async def handle_stop_lab(update: Update, st: dict, text: str):
 
 
 def _scan_active_sessions() -> list[tuple[str, str, str]]:
-    """Return (account_home, session_name, endpoint) for every live session."""
+    """Return (account_home, session_name, endpoint) for every live session.
+
+    A session is "live" only if it has a stored endpoint AND a valid token.json
+    exists for its account (keep-alive cannot work without credentials).
+    """
     found: list[tuple[str, str, str]] = []
     for chat_id in list(getattr(store, "_data", {}).keys()):
         for acc in store.list_accounts(chat_id):
             home = store.account_home(chat_id, acc["name"])
             cfg = os.path.join(home, ".config", "colab-cli", "sessions.json")
+            token = os.path.join(home, ".config", "colab-cli", "token.json")
             try:
-                with open(cfg) as f:
+                with open(cfg, encoding="utf-8") as f:
                     data = json.load(f)
             except Exception:
                 continue
             if not isinstance(data, dict):
+                continue
+            if not os.path.exists(token):
+                logging.warning("skip keep-alive for account %s: token.json missing", home)
                 continue
             for name, s in data.items():
                 if isinstance(s, dict) and s.get("endpoint"):
@@ -686,31 +712,66 @@ def _scan_active_sessions() -> list[tuple[str, str, str]]:
     return found
 
 
-async def keepalive_watchdog():
-    """Respawn any dead `colab keep-alive` daemons so labs don't get
-    idle-pruned after ~15 min when the detached CLI daemon dies."""
+async def keepalive_loop():
+    """Keep-alive loop running inside the bot process (no daemons).
+
+    First tick runs immediately (restores sessions from sessions.json after a
+    restart), then every 60s. Never crashes the bot: per-session failures are
+    recorded and logged by keepalive_once().
+    """
     while True:
         try:
             sessions = _scan_active_sessions()
             if sessions:
-                log(f"keepalive watch: {len(sessions)} active session(s)")
-            await asyncio.to_thread(colab_ops.reconcile_keepalives, sessions)
-        except Exception as e:
-            log(f"keepalive watchdog error: {e}")
+                await asyncio.to_thread(colab_ops.keepalive_once, sessions)
+        except Exception:
+            logging.exception("keepalive loop tick failed")
         await asyncio.sleep(60)
 
 
-def main():
-    async def post_init(_app):
-        _app.create_task(keepalive_watchdog())
-        log("keepalive watchdog started")
+_KA_TASK: asyncio.Task | None = None
 
-    app = Application.builder().token(CONFIG["bot_token"]).post_init(post_init).build()
+
+async def on_startup(app: Application):
+    global _KA_TASK
+    sessions = _scan_active_sessions()
+    log(
+        f"startup: restored {len(sessions)} session(s) from sessions.json "
+        f"(DATA_DIR={os.path.abspath(DATA_DIR)})"
+    )
+    _KA_TASK = app.create_task(keepalive_loop())
+    log("keepalive loop started (in-process, 60s interval)")
+
+
+async def on_shutdown(app: Application):
+    global _KA_TASK
+    if _KA_TASK is not None:
+        _KA_TASK.cancel()
+        try:
+            await _KA_TASK
+        except (asyncio.CancelledError, Exception):
+            pass
+        _KA_TASK = None
+    log("shutdown complete: keepalive loop stopped")
+
+
+def build_application() -> Application:
+    app = (
+        Application.builder()
+        .token(CONFIG["bot_token"])
+        .post_init(on_startup)
+        .post_shutdown(on_shutdown)
+        .build()
+    )
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ver", ver))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
+    return app
+
+
+def main():
     log("Bot started")
-    app.run_polling()
+    build_application().run_polling()
 
 
 if __name__ == "__main__":

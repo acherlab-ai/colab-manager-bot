@@ -1,5 +1,8 @@
+# Requires Python >= 3.12 (google-colab-cli 0.6.0 hard-requires >=3.12)
 python-telegram-bot>=21.0
+google-auth>=2.49.0
 google-auth-oauthlib>=1.3.0
 google-colab-cli==0.6.0
 jupyter-kernel-client==0.8.0
 requests>=2.32
+filelock>=3.29.2

@@ -1,0 +1,12 @@
+.git
+__pycache__/
+*.pyc
+*.log
+*.pid
+.venv/
+venv/
+data/
+config.json
+ka_monitor.out
+Dockerfile
+.dockerignore

@@ -16,14 +16,15 @@ class UserStore:
     def _load(self) -> dict:
         if os.path.exists(self.users_path):
             try:
-                return json.load(open(self.users_path))
+                with open(self.users_path, encoding="utf-8") as f:
+                    return json.load(f)
             except Exception:
                 return {}
         return {}
 
     def _save(self):
         tmp = self.users_path + ".tmp"
-        with open(tmp, "w") as f:
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(self._data, f, indent=2)
         os.replace(tmp, self.users_path)
 

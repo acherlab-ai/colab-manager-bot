@@ -1,6 +1,12 @@
 [build]
-  builder = "NIXPACKS"
-  buildCommand = "pip install --force-reinstall --no-cache-dir -r requirements.txt"
+  builder = "DOCKERFILE"
+  dockerfilePath = "Dockerfile"
 
 [deploy]
-  startCommand = "python apply_patches.py && python bot.py"
+  startCommand = "python bot.py"
+
+# Railway notes:
+# - Python must be >= 3.12 (google-colab-cli 0.6.0 requires it). Pinned in Dockerfile.
+# - Create a Railway Volume mounted at /app/data (DATA_DIR=/app/data is set in the
+#   Dockerfile) so sessions.json + token.json survive restarts and redeploys.
+# - Set BOT_TOKEN in Railway -> Variables (or .env).

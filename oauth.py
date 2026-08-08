@@ -13,6 +13,14 @@ logger = logging.getLogger(__name__)
 _OAUTH_STATE_FILE = "oauth_state.json"
 
 
+def _atomic_write(path: str, content: str) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(content)
+    os.replace(tmp, path)
+
+
 def _client_config():
     try:
         config_resource = resources.files("colab_cli").joinpath("oauth_config.json")
@@ -30,8 +38,10 @@ def generate_auth_url(account_home: str) -> str:
     flow.redirect_uri = REMOTE_REDIRECT_URI
     url, _ = flow.authorization_url(prompt="consent", token_usage="remote")
     os.makedirs(account_home, exist_ok=True)
-    with open(os.path.join(account_home, _OAUTH_STATE_FILE), "w") as f:
-        json.dump({"client_config": config, "code_verifier": flow.code_verifier}, f)
+    _atomic_write(
+        os.path.join(account_home, _OAUTH_STATE_FILE),
+        json.dumps({"client_config": config, "code_verifier": flow.code_verifier}),
+    )
     return url
 
 
@@ -41,7 +51,7 @@ def exchange_code(account_home: str, code: str) -> str:
     if not os.path.exists(state_path):
         raise RuntimeError("No pending login found. Press ĐĂNG NHẬP first.")
 
-    with open(state_path) as f:
+    with open(state_path, encoding="utf-8") as f:
         saved = json.load(f)
 
     flow = InstalledAppFlow.from_client_config(
@@ -53,9 +63,11 @@ def exchange_code(account_home: str, code: str) -> str:
 
     token_dir = os.path.join(account_home, ".config", "colab-cli")
     os.makedirs(token_dir, exist_ok=True)
-    with open(os.path.join(token_dir, "token.json"), "w") as f:
-        f.write(flow.credentials.to_json())
-    os.remove(state_path)
+    _atomic_write(os.path.join(token_dir, "token.json"), flow.credentials.to_json())
+    try:
+        os.remove(state_path)
+    except OSError:
+        pass
 
     return get_account_email(account_home)
 
@@ -64,7 +76,8 @@ def get_account_email(account_home: str) -> str:
     token_path = os.path.join(account_home, ".config", "colab-cli", "token.json")
     if not os.path.exists(token_path):
         raise RuntimeError("Account not logged in.")
-    creds = json.load(open(token_path))
+    with open(token_path, encoding="utf-8") as f:
+        creds = json.load(f)
     access_token = creds.get("token")
     if not access_token:
         raise RuntimeError("No access token available.")
